@@ -135,6 +135,7 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
             logger.error(f"请求豆瓣电影第 {page} 页失败")
             yield f"请求豆瓣电影第 {page} 页失败", None
             continue
+            continue
 
         logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
         
@@ -147,14 +148,14 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
 
         page_movie_count = 0
 
-        for movie in movies:
-            try:
-                # 检查 XPath 表达式是否正确
-                title = movie.xpath('.//span[@class="title"]/text()')
-                if not title:
-                    logger.warning(f"第 {page} 页：未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                    continue
-                title = title[0]
+    for movie in movies:
+        try:
+            # 检查 XPath 表达式是否正确
+            title = movie.xpath('.//span[@class="title"]/text()')
+            if not title:
+                logger.warning(f"第 {page} 页：未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                continue
+            title = title[0]
 
                 rating = movie.xpath('.//span[@class="rating_num"]/text()')
                 if not rating:
@@ -163,15 +164,15 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
                 # 增加去空格处理，避免空字符串
                 rating = rating[0].strip()
 
-                info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
-                if not info:
-                    logger.warning(f"第 {page} 页：未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                    continue
-                info = ''.join(info).strip()
+            info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
+            if not info:
+                logger.warning(f"第 {page} 页：未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                continue
+            info = ''.join(info).strip()
 
-                # 解析导演、演员、年份、类型、国家
-                director, actors = parse_director_and_actors(info)
-                year, genre, country = parse_year_genre_country(info)
+            # 解析导演、演员、年份、类型、国家
+            director, actors = parse_director_and_actors(info)
+            year, genre, country = parse_year_genre_country(info)
 
                 data = {
                     'title': title,
@@ -193,15 +194,15 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
                 # 返回已获取电影的信息
                 yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
 
-            except Exception as e:
-                logger.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                yield f"第 {page} 页解析电影时出错：{str(e)}", None
+        except Exception as e:
+            logger.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+            yield f"第 {page} 页解析电影时出错：{str(e)}", None
 
-        if page_movie_count == 0:
-            logger.error(f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。")
-            yield f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。", None
-        else:
-            yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
+    if page_movie_count == 0:
+        logger.error(f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。")
+        yield f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。", None
+    else:
+        yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
 
         # 数据后处理
         save_dir = get_safe_save_dir()
@@ -217,7 +218,9 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
             
             # 转换评分列为数值类型
             df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
+            df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
             # 按评分降序排序
+            df = df.sort_values(by='rating', ascending=False)
             df = df.sort_values(by='rating', ascending=False)
             # 重置索引保证顺序
             df = df.reset_index(drop=True)
@@ -233,7 +236,12 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
         except Exception as e:
             logger.error(f"电影数据处理失败：{str(e)}")
             yield f"电影数据处理失败：{str(e)}", None
+        except Exception as e:
+            logger.error(f"电影数据处理失败：{str(e)}")
+            yield f"电影数据处理失败：{str(e)}", None
     else:
+        logger.error(f"电影数据文件 {filename} 不存在，无法处理")
+        yield f"电影数据文件 {filename} 不存在，无法处理", None
         logger.error(f"电影数据文件 {filename} 不存在，无法处理")
         yield f"电影数据文件 {filename} 不存在，无法处理", None
 
@@ -771,6 +779,24 @@ class CrawlerGUI(tk.Tk):
             if self.current_data_file:
                 # 显示完成提示信息
                 messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
+        try:
+            # 获取爬取状态和文件名
+            status, filename = next(generator)
+            # 更新状态文本
+            logger.info(status)
+            
+            # 存储当前数据文件路径
+            if filename:
+                self.current_data_file = os.path.join(get_safe_save_dir(), filename)
+            
+            # 100毫秒后继续执行任务
+            self.after(100, lambda: self.continue_task(generator, filename))
+        except StopIteration:
+            # 更新状态文本
+            logger.info("爬取任务完成！")
+            if self.current_data_file:
+                # 显示完成提示信息
+                messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
 
     def generate_report(self):
         """生成数据分析报告"""
@@ -786,6 +812,7 @@ class CrawlerGUI(tk.Tk):
         logger.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
         # 异步生成报告防止界面卡死
         self.after(100, self._async_generate_report)
+        self.after(100, self._async_generate_report)
 
     def _async_generate_report(self):
         """异步执行报告生成"""
@@ -794,6 +821,7 @@ class CrawlerGUI(tk.Tk):
             success, result = analyze_and_generate_report(self.current_data_file)
             if success:
                 logger.info("报告生成成功！")
+                messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
                 messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
             else:
                 logger.info("报告生成失败")
