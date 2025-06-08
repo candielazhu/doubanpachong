@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from lxml import etree
+import sys
 import os
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
@@ -19,8 +20,29 @@ LEGAL_NOTICE = """
 豆瓣电影排行爬取
 """
 
+# 隐藏终端窗口 (仅Windows)
+if sys.platform == 'win32':
+    import ctypes
+    # 隐藏控制台窗口
+    ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+
+# 自定义日志处理程序，将日志输出到 GUI 日志框
+class GUILogHandler(logging.Handler):
+    def __init__(self, log_text):
+        super().__init__()
+        self.log_text = log_text
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, msg + '\n')
+        self.log_text.see(tk.END)  # 自动滚动到底部
+        self.log_text.config(state=tk.DISABLED)
+
 # 配置日志记录
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # 代理IP示例（请替换为有效代理或留空）
 proxy_list = [
@@ -35,13 +57,13 @@ def test_proxy(proxy):
         response = requests.get("https://www.baidu.com", proxies=proxies, timeout=10)
         time.sleep(random.uniform(1, 3))
         if response.status_code == 200:
-            print(f"代理 {proxy} 有效")
+            logger.info(f"代理 {proxy} 有效")
             return True
         else:
-            print(f"代理 {proxy} 无效，状态码：{response.status_code}")
+            logger.warning(f"代理 {proxy} 无效，状态码：{response.status_code}")
             return False
     except Exception as e:
-        print(f"代理 {proxy} 连接失败：{e}")
+        logger.error(f"代理 {proxy} 连接失败：{e}")
         return False
 
 # 验证代理列表
@@ -72,9 +94,9 @@ def save_to_csv(data, filename, fieldnames):
         with open(file_path, "a", newline='', encoding='utf-8-sig') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writerow(filtered_data)
-            logging.info(f"成功写入数据到新文件: {file_path}")
+            logger.info(f"成功写入数据到新文件: {file_path}")
     except Exception as e:
-        logging.error(f"写入 CSV 文件失败: {str(e)}")
+        logger.error(f"写入 CSV 文件失败: {str(e)}")
 
 # ====================== 电影爬取模块 ======================
 def crawl_movie(rank_type="top250", page=1):
@@ -86,19 +108,19 @@ def crawl_movie(rank_type="top250", page=1):
     url = f"https://movie.douban.com/top250?start={(page - 1) * 25}"
     headers = get_random_headers()
     # 增加重试机制，提高请求稳定性
-    logging.info(f"开始爬取豆瓣电影第 {page} 页，URL: {url}")
+    logger.info(f"开始爬取豆瓣电影第 {page} 页，URL: {url}")
     response = make_request_with_retries(url, headers)
     if not response:
-        logging.error(f"请求豆瓣电影第 {page} 页失败")
+        logger.error(f"请求豆瓣电影第 {page} 页失败")
         yield f"请求豆瓣电影第 {page} 页失败", None
         return
-    
-    logging.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
-    logging.info(f"响应内容长度: {len(response.text)}")
-    
+
+    logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
+    logger.info(f"响应内容长度: {len(response.text)}")
+
     root = etree.HTML(response.text)
     movies = root.xpath('//div[@class="item"]')
-    logging.info(f"找到 {len(movies)} 个电影节点")
+    logger.info(f"找到 {len(movies)} 个电影节点")
 
     # 增加请求间隔
     time.sleep(random.uniform(2, 5))
@@ -112,19 +134,19 @@ def crawl_movie(rank_type="top250", page=1):
             # 检查 XPath 表达式是否正确
             title = movie.xpath('.//span[@class="title"]/text()')
             if not title:
-                logging.warning(f"未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                logger.warning(f"未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
                 continue
             title = title[0]
 
             rating = movie.xpath('.//span[@class="rating_num"]/text()')
             if not rating:
-                logging.warning(f"未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                logger.warning(f"未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
                 continue
             rating = rating[0]
 
             info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
             if not info:
-                logging.warning(f"未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                logger.warning(f"未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
                 continue
             info = ''.join(info).strip()
 
@@ -147,11 +169,11 @@ def crawl_movie(rank_type="top250", page=1):
             # 返回已获取电影的信息
             yield f"已获取电影：{title}", None
         except Exception as e:
-            logging.error(f"解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+            logger.error(f"解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
             yield f"解析电影时出错：{str(e)}", None
 
     if movie_count == 0:
-        logging.error("未成功获取到任何电影数据，可能爬取失败。")
+        logger.error("未成功获取到任何电影数据，可能爬取失败。")
         print("未成功获取到任何电影数据，可能爬取失败。")
 
     # 数据后处理
@@ -175,14 +197,14 @@ def crawl_movie(rank_type="top250", page=1):
             df.insert(0, "id", [f"movie{i:04d}" for i in range(1, len(df) + 1)])
             # 将处理后的数据保存到CSV文件
             df.to_csv(file_path, index=False, encoding='utf-8-sig')
-            logging.info("电影数据处理完成")
+            logger.info("电影数据处理完成")
             # 返回电影数据爬取完成的信息和文件名
             yield "电影数据爬取完成！", filename
         except Exception as e:
-            logging.error(f"电影数据处理失败：{str(e)}")
+            logger.error(f"电影数据处理失败：{str(e)}")
             yield f"电影数据处理失败：{str(e)}", None
     else:
-        logging.error(f"电影数据文件 {filename} 不存在，无法处理")
+        logger.error(f"电影数据文件 {filename} 不存在，无法处理")
         yield f"电影数据文件 {filename} 不存在，无法处理", None
 
 def make_request_with_retries(url, headers, max_retries=3):
@@ -205,9 +227,9 @@ def make_request_with_retries(url, headers, max_retries=3):
 
             return response
         except requests.exceptions.RequestException as e:
-            print(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
+            logger.warning(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
             retries += 1
-    print("达到最大重试次数，请求失败。")
+    logger.error("达到最大重试次数，请求失败。")
     return None
 
 def get_text_from_xpath(element, xpath):
@@ -275,9 +297,9 @@ def safe_request(url, headers,max_retries=3):
             response.raise_for_status()
             return response
         except requests.exceptions.RequestException as e:
-            print(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
+            logger.warning(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
             retries += 1
-    print("达到最大重试次数，请求失败。")
+    logger.error("达到最大重试次数，请求失败。")
     response.encoding = 'utf-8'
     return None
 
@@ -334,7 +356,7 @@ def analyze_and_generate_report(csv_file):
         
         return True, report_file
     except Exception as e:
-        logging.error(f"生成报告失败: {str(e)}")
+        logger.error(f"生成报告失败: {str(e)}")
         return False, str(e)
 
 def clean_movie_data(df):
@@ -500,7 +522,7 @@ def plot_data_overview(df, pdf):
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.axis('off')  # 隐藏坐标轴
     
-# 创建表格数据
+    # 创建表格数据
     table_data = [
         ["数据集统计", "值"],
         ["电影总数", len(df)],
@@ -569,9 +591,6 @@ class CrawlerGUI(tk.Tk):
         # 设置 Label 的前景色
         style.configure("Blue.TLabel", foreground="blue")
 
-        # 状态显示
-        self.status_text = tk.StringVar()
-        ttk.Label(self, textvariable=self.status_text, style="Blue.TLabel", wraplength=550).pack(pady=10, padx=20)
         
         # 代理输入框和验证按钮
         proxy_frame = ttk.Frame(self)
@@ -586,7 +605,6 @@ class CrawlerGUI(tk.Tk):
         # 创建验证代理按钮
         ttk.Button(proxy_frame, text="验证代理", command=self.validate_proxy).pack(side=tk.LEFT, padx=5)
 
- 
         # 控制按钮框架
         button_frame = ttk.Frame(self)
         button_frame.pack(pady=10)
@@ -602,8 +620,26 @@ class CrawlerGUI(tk.Tk):
         ttk.Button(report_frame, text="生成分析报告(当前数据)", command=self.generate_report).pack(side=tk.LEFT, padx=5)
         ttk.Button(report_frame, text="选择文件生成报告", command=self.select_and_generate_report).pack(side=tk.LEFT, padx=5)
 
-
+        # 创建日志显示区域
+        log_frame = ttk.LabelFrame(self, text="运行日志")
+        log_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
         
+        # 创建滚动条
+        scrollbar = ttk.Scrollbar(log_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 创建日志文本框
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.log_text.config(state=tk.DISABLED)  # 初始设置为不可编辑
+        
+        scrollbar.config(command=self.log_text.yview)
+        
+        # 配置日志处理程序
+        gui_handler = GUILogHandler(self.log_text)
+        gui_handler.setFormatter(formatter)
+        logger.addHandler(gui_handler)
+
         # 添加状态变量存储当前数据文件路径
         self.current_data_file = None
 
@@ -617,13 +653,13 @@ class CrawlerGUI(tk.Tk):
         
         if file_path:
             # 更新状态文本
-            self.status_text.set(f"已选择文件: {file_path}")
+            logger.info(f"已选择文件: {file_path}")
             # 存储当前数据文件路径
             self.current_data_file = file_path
             # 生成报告
             self.generate_report()
         else:
-            self.status_text.set("文件选择已取消")
+            logger.info("文件选择已取消")
         
     def run_task(self, generator):
         """
@@ -634,7 +670,7 @@ class CrawlerGUI(tk.Tk):
             # 获取爬取状态和文件名
             status, filename = next(generator)
             # 更新状态文本
-            self.status_text.set(status)
+            logger.info(status)
             
             # 存储当前数据文件路径
             if filename:
@@ -644,7 +680,7 @@ class CrawlerGUI(tk.Tk):
             self.after(100, lambda: self.continue_task(generator, filename))
         except StopIteration:
             # 更新状态文本
-            self.status_text.set("爬取任务完成！")
+            logger.info("爬取任务完成！")
             if self.current_data_file:
                 # 显示完成提示信息
                 messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
@@ -652,15 +688,15 @@ class CrawlerGUI(tk.Tk):
     def generate_report(self):
         """生成数据分析报告"""
         if not self.current_data_file:
-            messagebox.showwarning("警告", "请先爬取数据再生成报告")
+            logger.waring("警告", "请先爬取数据再生成报告")
             return
         
         # 检查文件是否存在
         if not os.path.exists(self.current_data_file):
-            messagebox.showerror("错误", f"文件不存在: {self.current_data_file}")
+            logger.error("错误", f"文件不存在: {self.current_data_file}")
             return
         
-        self.status_text.set(f"正在分析文件: {os.path.basename(self.current_data_file)}")
+        logger.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
         # 异步生成报告防止界面卡死
         self.after(100, self._async_generate_report)
 
@@ -670,20 +706,20 @@ class CrawlerGUI(tk.Tk):
             # 生成报告
             success, result = analyze_and_generate_report(self.current_data_file)
             if success:
-                self.status_text.set("报告生成成功！")
+                logger.info("报告生成成功！")
                 messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
             else:
-                self.status_text.set("报告生成失败")
-                messagebox.showerror("错误", f"生成报告失败: {result}")
+                logger.info("报告生成失败")
+                logger.error("错误", f"生成报告失败: {result}")
         except Exception as e:
-            self.status_text.set(f"报告生成错误: {str(e)}")
-            messagebox.showerror("错误", f"生成报告时出错: {str(e)}")
+            logger.info(f"报告生成错误: {str(e)}")
+            logger.error("错误", f"生成报告时出错: {str(e)}")
 
     def validate_proxy(self):
         # 获取输入的代理地址
         proxy = self.proxy_entry.get().strip()
         if not proxy:
-            messagebox.showwarning("警告", "请输入代理地址。")
+            logger.waring("警告", "请输入代理地址。")
             return
         try:
             # 设置代理
@@ -697,13 +733,13 @@ class CrawlerGUI(tk.Tk):
                 # 更新代理列表
                 proxy_list = [proxy]
             else:
-                messagebox.showerror("验证失败", f"代理 {proxy} 不可用，状态码：{response.status_code}")
+                logger.error("验证失败", f"代理 {proxy} 不可用，状态码：{response.status_code}")
         except Exception as e:
-            messagebox.showerror("验证失败", f"代理 {proxy} 连接失败：{str(e)}")
+            logger.error("验证失败", f"代理 {proxy} 连接失败：{str(e)}")
 
     def start_crawling(self):
         """启动爬取任务"""
-        self.status_text.set("正在准备爬取豆瓣电影...")
+        logger.info("正在准备爬取豆瓣电影...")
         try:
             page = int(self.movie_entry.get())
             if not (1 <= page <= 10):
@@ -711,16 +747,16 @@ class CrawlerGUI(tk.Tk):
             # 异步执行爬取任务
             self.run_task(crawl_movie(page=page))
         except Exception as e:
-            messagebox.showerror("输入错误", f"请检查输入：{str(e)}")
+            logger.error("输入错误", f"请检查输入：{str(e)}")
 
     def continue_task(self, generator, last_filename):
         """继续执行生成器任务"""
         try:
             status, filename = next(generator)
-            self.status_text.set(f"{status}\n文件路径：{filename}")
+            logger.info(f"{status}\n文件路径：{filename}")
             self.after(100, lambda: self.continue_task(generator, filename))
         except StopIteration:
-            self.status_text.set("爬取任务完成！")
+            logger.info("爬取任务完成！")
             # 检查 last_filename 是否有值
             if last_filename:
                 # 获取保存目录
