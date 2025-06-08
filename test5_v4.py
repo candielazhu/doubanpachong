@@ -24,12 +24,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # 代理IP示例（请替换为有效代理或留空）
 proxy_list = [
-    # 'http://117.69.237.77:8089',
-    # 'http://101.37.19.35:80'
-    # 'http://221.194.147.197:80'
-    # 'http://159.226.227.117:80'
-    # 'http://101.37.26.136:80'
-    # 'http://202.101.213.33:17406'
     # 'http://120.25.1.15:7890'
 ]
 
