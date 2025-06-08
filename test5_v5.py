@@ -13,18 +13,12 @@ import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 import logging
 from datetime import datetime
-import threading
-import queue
 
 # ====================== 合规声明与常量 ======================
 LEGAL_NOTICE = """
 注意：本工具仅用于学习研究，严禁恶意爬取或商业用途！
 豆瓣电影排行爬取
 """
-# 线程池大小，可根据网络和CPU性能调整
-THREAD_POOL_SIZE = 5
-# 任务队列
-task_queue = queue.Queue()
 
 # 隐藏终端窗口 (仅Windows)
 if sys.platform == 'win32':
@@ -111,11 +105,21 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
     
     fieldnames = ['id', 'title', 'rating', 'director', 'actors', 'year', 'genre', 'country']
     total_movie_count = 0
-    #存储临时 CSV 文件的列表
-    temp_files = []
     
-    def crawl_single_page(page):
-        """爬取单页数据并写入临时 CSV 文件"""
+    # 初始化CSV文件，创建表头 
+    save_dir = get_safe_save_dir()
+    file_path = os.path.join(save_dir, filename)
+    try:
+        with open(file_path, "w", newline='', encoding='utf-8-sig') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames[1:])  # 不包含id字段
+            writer.writeheader()
+        logger.info(f"初始化CSV文件: {file_path}")
+    except Exception as e:
+        logger.error(f"初始化CSV文件失败: {str(e)}")
+        return
+    
+    # 遍历指定页面范围
+    for page in range(start_page, end_page + 1):
         url = f"https://movie.douban.com/top250?start={(page - 1) * 25}"
         headers = get_random_headers()
         
@@ -124,8 +128,7 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
         if not response:
             logger.error(f"请求豆瓣电影第 {page} 页失败")
             yield f"请求豆瓣电影第 {page} 页失败", None
-            return
-
+            continue
 
         logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
         
@@ -133,143 +136,93 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
         movies = root.xpath('//div[@class="item"]')
         logger.info(f"第 {page} 页找到 {len(movies)} 个电影节点")
 
-        page_movie_count = 0
-        temp_filename = f"temp_page_{page}_{timestamp}.csv"  # 新增：临时 CSV 文件名
-        temp_files.append(temp_filename)  # 新增：将临时文件名添加到列表中
+    # 增加请求间隔
+    time.sleep(random.uniform(2, 5))
 
-        # 初始化临时 CSV 文件，创建表头 
+    page_movie_count = 0
+
+    for movie in movies:
         try:
-            with open(temp_filename, "w", newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames[1:])  # 不包含id字段
-                writer.writeheader()
-            logger.info(f"初始化临时 CSV 文件: {temp_filename}")
+            # 检查 XPath 表达式是否正确
+            title = movie.xpath('.//span[@class="title"]/text()')
+            if not title:
+                logger.warning(f"第 {page} 页：未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                continue
+            title = title[0]
+
+            rating = movie.xpath('.//span[@class="rating_num"]/text()')
+            if not rating:
+                logger.warning(f"第 {page} 页：未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                continue
+            rating = rating[0]
+
+            info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
+            if not info:
+                logger.warning(f"第 {page} 页：未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                continue
+            info = ''.join(info).strip()
+
+            # 解析导演、演员、年份、类型、国家
+            director, actors = parse_director_and_actors(info)
+            year, genre, country = parse_year_genre_country(info)
+
+            data = {
+                'title': title,
+                'rating': rating,
+                'director': director,
+                'actors': actors,
+                'year': year,
+                'genre': genre,
+                'country': country
+            }
+            # 保存数据到CSV文件，暂不保存id
+            save_to_csv(data, filename, fieldnames[1:])
+            page_movie_count += 1
+            total_movie_count += 1
+
+            # 返回已获取电影的信息
+            yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
+
         except Exception as e:
-            logger.error(f"初始化临时 CSV 文件失败: {str(e)}")
-            return
+            logger.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+            yield f"第 {page} 页解析电影时出错：{str(e)}", None
 
-        for movie in movies:
-            try:
-                # 检查 XPath 表达式是否正确
-                title = movie.xpath('.//span[@class="title"]/text()')
-                if not title:
-                    logger.warning(f"第 {page} 页：未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                    continue
-                title = title[0]
+    if page_movie_count == 0:
+        logger.error(f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。")
+        yield f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。", None
+    else:
+        yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
 
-                rating = movie.xpath('.//span[@class="rating_num"]/text()')
-                if not rating:
-                    logger.warning(f"第 {page} 页：未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                    continue
-                rating = rating[0]
-
-                info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
-                if not info:
-                    logger.warning(f"第 {page} 页：未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                    continue
-                info = ''.join(info).strip()
-
-                # 解析导演、演员、年份、类型、国家
-                director, actors = parse_director_and_actors(info)
-                year, genre, country = parse_year_genre_country(info)
-
-                data = {
-                    'title': title,
-                    'rating': rating,
-                    'director': director,
-                    'actors': actors,
-                    'year': year,
-                    'genre': genre,
-                    'country': country
-                }
-                # 保存数据到临时 CSV 文件，暂不保存id
-                save_to_csv(data, temp_filename, fieldnames[1:])
-                page_movie_count += 1
-                total_movie_count += 1
-
-                # 返回已获取电影的信息
-                yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
-
-            except Exception as e:
-                logger.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                yield f"第 {page} 页解析电影时出错：{str(e)}", None
-
-        if page_movie_count == 0:
-            logger.error(f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。")
-            yield f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。", None
-        else:
-            yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
-
-    def worker():
-        """线程工作函数"""
-        while True:
-            page = task_queue.get()
-            if page is None:
-                break
-            crawl_single_page(page)
-            task_queue.task_done()
-
-    # 创建线程池
-    threads = []
-    for _ in range(THREAD_POOL_SIZE):
-        thread = threading.Thread(target=worker)
-        thread.start()
-        threads.append(thread)
-
-    # 将任务加入队列
-    for page in range(start_page, end_page + 1):
-        task_queue.put(page)
-
-    # 等待所有线程完成
-    task_queue.join()
-
-    # 停止所有线程
-    for _ in range(THREAD_POOL_SIZE):
-        task_queue.put(None)
-    for thread in threads:
-        thread.join()
-
-    # 合并临时 CSV 文件
-    if temp_files:
-        df_list = []
-        for temp_file in temp_files:
-            try:
-                df = pd.read_csv(temp_file, encoding='utf-8-sig')
-                df_list.append(df)
-            except Exception as e:
-                logger.error(f"读取临时 CSV 文件 {temp_file} 失败: {str(e)}")
-        if df_list:
-            final_df = pd.concat(df_list, ignore_index=True)
+    # 数据后处理
+    save_dir = get_safe_save_dir()
+    file_path = os.path.join(save_dir, filename)
+    if os.path.exists(file_path) and total_movie_count > 0:
+        try:
+            # 读取CSV文件
+            df = pd.read_csv(file_path, encoding='utf-8-sig')
             # 去除重复数据
-            final_df = final_df.drop_duplicates()
+            df = df.drop_duplicates()
 
             # 转换评分列为数值类型
-            final_df['rating'] = pd.to_numeric(final_df['rating'], errors='coerce')
+            df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
             # 按评分降序排序
-            final_df = final_df.sort_values(by='rating', ascending=False)
+            df = df.sort_values(by='rating', ascending=False)
             # 重置索引保证顺序
-            final_df = final_df.reset_index(drop=True)
+            df = df.reset_index(drop=True)
 
             # 插入id列
-            final_df.insert(0, "id", [f"movie{i:04d}" for i in range(1, len(final_df) + 1)])
-            # 将处理后的数据保存到最终 CSV 文件
-            final_df.to_csv(filename, index=False, encoding='utf-8-sig')
+            df.insert(0, "id", [f"movie{i:04d}" for i in range(1, len(df) + 1)])
+            # 将处理后的数据保存到CSV文件
+            df.to_csv(file_path, index=False, encoding='utf-8-sig')
             logger.info("电影数据处理完成")
             # 返回电影数据爬取完成的信息和文件名
             yield f"所有页面爬取完成！共获取 {total_movie_count} 部电影", filename
-        else:
-            logger.error("没有有效的临时 CSV 文件，无法合并。")
-            yield f"没有有效的临时 CSV 文件，无法合并。", None
-
-        # 删除临时 CSV 文件
-        for temp_file in temp_files:
-            try:
-                os.remove(temp_file)
-                logger.info(f"删除临时 CSV 文件: {temp_file}")
-            except Exception as e:
-                logger.error(f"删除临时 CSV 文件 {temp_file} 失败: {str(e)}")
+        except Exception as e:
+            logger.error(f"电影数据处理失败：{str(e)}")
+            yield f"电影数据处理失败：{str(e)}", None
     else:
-        logger.error("没有生成临时 CSV 文件，无法合并。")
-        yield f"没有生成临时 CSV 文件，无法合并。", None
+        logger.error(f"电影数据文件 {filename} 不存在，无法处理")
+        yield f"电影数据文件 {filename} 不存在，无法处理", None
 
 def make_request_with_retries(url, headers, max_retries=3):
     """
@@ -787,22 +740,24 @@ class CrawlerGUI(tk.Tk):
         异步执行爬取任务
         :param generator: 爬取任务生成器
         """
-        def thread_task():
-            try:
-                for status, filename in generator:
-                    self.after(0, lambda s=status, f=filename: self.update_status(s, f))
-            except Exception as e:
-                logger.error(f"爬取任务出错: {str(e)}")
-            finally:
-                self.after(0, lambda: self.update_status("爬取任务完成！", None))
-
-        threading.Thread(target=thread_task).start()
-    
-    def update_status(self, status, filename):
-        logger.info(status)
-        if filename:
-            self.current_data_file = os.path.join(get_safe_save_dir(), filename)
-            messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
+        try:
+            # 获取爬取状态和文件名
+            status, filename = next(generator)
+            # 更新状态文本
+            logger.info(status)
+            
+            # 存储当前数据文件路径
+            if filename:
+                self.current_data_file = os.path.join(get_safe_save_dir(), filename)
+            
+            # 100毫秒后继续执行任务
+            self.after(100, lambda: self.continue_task(generator, filename))
+        except StopIteration:
+            # 更新状态文本
+            logger.info("爬取任务完成！")
+            if self.current_data_file:
+                # 显示完成提示信息
+                messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
 
     def generate_report(self):
         """生成数据分析报告"""
@@ -817,7 +772,7 @@ class CrawlerGUI(tk.Tk):
         
         logger.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
         # 异步生成报告防止界面卡死
-        threading.Thread(target=self._async_generate_report).start()
+        self.after(100, self._async_generate_report)
 
     def _async_generate_report(self):
         """异步执行报告生成"""
@@ -826,7 +781,7 @@ class CrawlerGUI(tk.Tk):
             success, result = analyze_and_generate_report(self.current_data_file)
             if success:
                 logger.info("报告生成成功！")
-                self.after(0, lambda: messagebox.showinfo("成功", f"分析报告已保存到：\n{result}"))
+                messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
             else:
                 logger.info("报告生成失败")
                 logger.error("错误", f"生成报告失败: {result}")
