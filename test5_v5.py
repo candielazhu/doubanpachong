@@ -89,8 +89,6 @@ def save_to_csv(data, filename, fieldnames):
         # 追加模式写入数据
         with open(file_path, "a", newline='', encoding='utf-8-sig') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if os.path.getsize(file_path) == 0:
-                writer.writeheader()
             writer.writerow(filtered_data)
             logger.info(f"成功写入数据到新文件: {file_path}")
     except Exception as e:
@@ -99,10 +97,6 @@ def save_to_csv(data, filename, fieldnames):
 # ====================== 电影爬取模块 ======================
 def crawl_movie(rank_type="top250",start_page=1, end_page=1):
     """爬取豆瓣电影排行榜 - 支持多页爬取"""
-
-    #全局计数器，记录总电影数量
-    total_movie_count = 0
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if start_page == end_page:
         filename = f"豆瓣电影排行_{rank_type}_第{start_page}页_{timestamp}.csv"
@@ -110,7 +104,7 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
         filename = f"豆瓣电影排行_{rank_type}_第{start_page}-{end_page}页_{timestamp}.csv"
     
     fieldnames = ['id', 'title', 'rating', 'director', 'actors', 'year', 'genre', 'country']
-
+    total_movie_count = 0
     
     # 初始化CSV文件，创建表头 
     save_dir = get_safe_save_dir()
@@ -135,7 +129,6 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
             logger.error(f"请求豆瓣电影第 {page} 页失败")
             yield f"请求豆瓣电影第 {page} 页失败", None
             continue
-            continue
 
         logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
         
@@ -143,10 +136,10 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
         movies = root.xpath('//div[@class="item"]')
         logger.info(f"第 {page} 页找到 {len(movies)} 个电影节点")
 
-        # 增加请求间隔
-        time.sleep(random.uniform(2, 5))
+    # 增加请求间隔
+    time.sleep(random.uniform(2, 5))
 
-        page_movie_count = 0
+    page_movie_count = 0
 
     for movie in movies:
         try:
@@ -157,12 +150,11 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
                 continue
             title = title[0]
 
-                rating = movie.xpath('.//span[@class="rating_num"]/text()')
-                if not rating:
-                    logger.warning(f"第 {page} 页：未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                    continue
-                # 增加去空格处理，避免空字符串
-                rating = rating[0].strip()
+            rating = movie.xpath('.//span[@class="rating_num"]/text()')
+            if not rating:
+                logger.warning(f"第 {page} 页：未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                continue
+            rating = rating[0]
 
             info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
             if not info:
@@ -174,25 +166,22 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
             director, actors = parse_director_and_actors(info)
             year, genre, country = parse_year_genre_country(info)
 
-                data = {
-                    'title': title,
-                    'rating': rating,
-                    'director': director,
-                    'actors': actors,
-                    'year': year,
-                    'genre': genre,
-                    'country': country
-                }
+            data = {
+                'title': title,
+                'rating': rating,
+                'director': director,
+                'actors': actors,
+                'year': year,
+                'genre': genre,
+                'country': country
+            }
+            # 保存数据到CSV文件，暂不保存id
+            save_to_csv(data, filename, fieldnames[1:])
+            page_movie_count += 1
+            total_movie_count += 1
 
-                #全局计数器递增
-                total_movie_count += 1
-
-                # 保存数据到CSV文件，暂不保存id
-                save_to_csv(data, filename, fieldnames[1:])
-                page_movie_count += 1
-
-                # 返回已获取电影的信息
-                yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
+            # 返回已获取电影的信息
+            yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
 
         except Exception as e:
             logger.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
@@ -204,44 +193,34 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
     else:
         yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
 
-        # 数据后处理
-        save_dir = get_safe_save_dir()
-        file_path = os.path.join(save_dir, filename)
-    
-    # 所有页面爬取完成后，处理数据并生成连续id
+    # 数据后处理
+    save_dir = get_safe_save_dir()
+    file_path = os.path.join(save_dir, filename)
     if os.path.exists(file_path) and total_movie_count > 0:
         try:
             # 读取CSV文件
             df = pd.read_csv(file_path, encoding='utf-8-sig')
             # 去除重复数据
             df = df.drop_duplicates()
-            
+
             # 转换评分列为数值类型
-            df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
             df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
             # 按评分降序排序
             df = df.sort_values(by='rating', ascending=False)
-            df = df.sort_values(by='rating', ascending=False)
             # 重置索引保证顺序
             df = df.reset_index(drop=True)
-            
-            # 插入id列（原逻辑存在多页重复问题，修改后见下文）
-            df.insert(0, "id", [f"movie{i:04d}" for i in range(1, total_movie_count + 1)])
-            
+
+            # 插入id列
+            df.insert(0, "id", [f"movie{i:04d}" for i in range(1, len(df) + 1)])
             # 将处理后的数据保存到CSV文件
             df.to_csv(file_path, index=False, encoding='utf-8-sig')
             logger.info("电影数据处理完成")
-            # 返回爬取完成信息和文件名
+            # 返回电影数据爬取完成的信息和文件名
             yield f"所有页面爬取完成！共获取 {total_movie_count} 部电影", filename
         except Exception as e:
             logger.error(f"电影数据处理失败：{str(e)}")
             yield f"电影数据处理失败：{str(e)}", None
-        except Exception as e:
-            logger.error(f"电影数据处理失败：{str(e)}")
-            yield f"电影数据处理失败：{str(e)}", None
     else:
-        logger.error(f"电影数据文件 {filename} 不存在，无法处理")
-        yield f"电影数据文件 {filename} 不存在，无法处理", None
         logger.error(f"电影数据文件 {filename} 不存在，无法处理")
         yield f"电影数据文件 {filename} 不存在，无法处理", None
 
@@ -602,7 +581,7 @@ class CrawlerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("豆瓣电影爬取工具")
-        self.geometry("600x600")
+        self.geometry("600x500")
 
         # 创建主框架
         main_frame = ttk.Frame(self, padding="10")
@@ -779,24 +758,6 @@ class CrawlerGUI(tk.Tk):
             if self.current_data_file:
                 # 显示完成提示信息
                 messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
-        try:
-            # 获取爬取状态和文件名
-            status, filename = next(generator)
-            # 更新状态文本
-            logger.info(status)
-            
-            # 存储当前数据文件路径
-            if filename:
-                self.current_data_file = os.path.join(get_safe_save_dir(), filename)
-            
-            # 100毫秒后继续执行任务
-            self.after(100, lambda: self.continue_task(generator, filename))
-        except StopIteration:
-            # 更新状态文本
-            logger.info("爬取任务完成！")
-            if self.current_data_file:
-                # 显示完成提示信息
-                messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
 
     def generate_report(self):
         """生成数据分析报告"""
@@ -812,7 +773,6 @@ class CrawlerGUI(tk.Tk):
         logger.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
         # 异步生成报告防止界面卡死
         self.after(100, self._async_generate_report)
-        self.after(100, self._async_generate_report)
 
     def _async_generate_report(self):
         """异步执行报告生成"""
@@ -821,7 +781,6 @@ class CrawlerGUI(tk.Tk):
             success, result = analyze_and_generate_report(self.current_data_file)
             if success:
                 logger.info("报告生成成功！")
-                messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
                 messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
             else:
                 logger.info("报告生成失败")
