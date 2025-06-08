@@ -86,10 +86,6 @@ def save_to_csv(data, filename, fieldnames):
     # 过滤 data 字典，只保留 fieldnames 中包含的字段
     filtered_data = {key: value for key, value in data.items() if key in fieldnames}
     try:
-        if not os.path.exists(file_path):
-            with open(file_path, "w", newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
         # 追加模式写入数据
         with open(file_path, "a", newline='', encoding='utf-8-sig') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -99,54 +95,70 @@ def save_to_csv(data, filename, fieldnames):
         logger.error(f"写入 CSV 文件失败: {str(e)}")
 
 # ====================== 电影爬取模块 ======================
-def crawl_movie(rank_type="top250", page=1):
-    """爬取豆瓣电影排行榜"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 新增时间戳
-    filename = f"豆瓣电影排行_{rank_type}_{timestamp}.csv"  # 修改文件名格式
+def crawl_movie(rank_type="top250",start_page=1, end_page=1):
+    """爬取豆瓣电影排行榜 - 支持多页爬取"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if start_page == end_page:
+        filename = f"豆瓣电影排行_{rank_type}_第{start_page}页_{timestamp}.csv"
+    else:
+        filename = f"豆瓣电影排行_{rank_type}_第{start_page}-{end_page}页_{timestamp}.csv"
+    
     fieldnames = ['id', 'title', 'rating', 'director', 'actors', 'year', 'genre', 'country']
-
-    url = f"https://movie.douban.com/top250?start={(page - 1) * 25}"
-    headers = get_random_headers()
-    # 增加重试机制，提高请求稳定性
-    logger.info(f"开始爬取豆瓣电影第 {page} 页，URL: {url}")
-    response = make_request_with_retries(url, headers)
-    if not response:
-        logger.error(f"请求豆瓣电影第 {page} 页失败")
-        yield f"请求豆瓣电影第 {page} 页失败", None
+    total_movie_count = 0
+    
+    # 初始化CSV文件，创建表头 
+    save_dir = get_safe_save_dir()
+    file_path = os.path.join(save_dir, filename)
+    try:
+        with open(file_path, "w", newline='', encoding='utf-8-sig') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames[1:])  # 不包含id字段
+            writer.writeheader()
+        logger.info(f"初始化CSV文件: {file_path}")
+    except Exception as e:
+        logger.error(f"初始化CSV文件失败: {str(e)}")
         return
+    
+    # 遍历指定页面范围
+    for page in range(start_page, end_page + 1):
+        url = f"https://movie.douban.com/top250?start={(page - 1) * 25}"
+        headers = get_random_headers()
+        
+        logger.info(f"开始爬取豆瓣电影第 {page} 页，URL: {url}")
+        response = make_request_with_retries(url, headers)
+        if not response:
+            logger.error(f"请求豆瓣电影第 {page} 页失败")
+            yield f"请求豆瓣电影第 {page} 页失败", None
+            continue
 
-    logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
-    logger.info(f"响应内容长度: {len(response.text)}")
-
-    root = etree.HTML(response.text)
-    movies = root.xpath('//div[@class="item"]')
-    logger.info(f"找到 {len(movies)} 个电影节点")
+        logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
+        
+        root = etree.HTML(response.text)
+        movies = root.xpath('//div[@class="item"]')
+        logger.info(f"第 {page} 页找到 {len(movies)} 个电影节点")
 
     # 增加请求间隔
     time.sleep(random.uniform(2, 5))
 
-    root = etree.HTML(response.text)
-    movies = root.xpath('//div[@class="item"]')
-    movie_count = 0
+    page_movie_count = 0
 
     for movie in movies:
         try:
             # 检查 XPath 表达式是否正确
             title = movie.xpath('.//span[@class="title"]/text()')
             if not title:
-                logger.warning(f"未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                logger.warning(f"第 {page} 页：未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
                 continue
             title = title[0]
 
             rating = movie.xpath('.//span[@class="rating_num"]/text()')
             if not rating:
-                logger.warning(f"未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                logger.warning(f"第 {page} 页：未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
                 continue
             rating = rating[0]
 
             info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
             if not info:
-                logger.warning(f"未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                logger.warning(f"第 {page} 页：未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
                 continue
             info = ''.join(info).strip()
 
@@ -165,21 +177,26 @@ def crawl_movie(rank_type="top250", page=1):
             }
             # 保存数据到CSV文件，暂不保存id
             save_to_csv(data, filename, fieldnames[1:])
-            movie_count += 1
-            # 返回已获取电影的信息
-            yield f"已获取电影：{title}", None
-        except Exception as e:
-            logger.error(f"解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-            yield f"解析电影时出错：{str(e)}", None
+            page_movie_count += 1
+            total_movie_count += 1
 
-    if movie_count == 0:
-        logger.error("未成功获取到任何电影数据，可能爬取失败。")
-        print("未成功获取到任何电影数据，可能爬取失败。")
+            # 返回已获取电影的信息
+            yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
+
+        except Exception as e:
+            logger.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+            yield f"第 {page} 页解析电影时出错：{str(e)}", None
+
+    if page_movie_count == 0:
+        logger.error(f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。")
+        yield f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。", None
+    else:
+        yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
 
     # 数据后处理
     save_dir = get_safe_save_dir()
     file_path = os.path.join(save_dir, filename)
-    if os.path.exists(file_path):
+    if os.path.exists(file_path) and total_movie_count > 0:
         try:
             # 读取CSV文件
             df = pd.read_csv(file_path, encoding='utf-8-sig')
@@ -199,7 +216,7 @@ def crawl_movie(rank_type="top250", page=1):
             df.to_csv(file_path, index=False, encoding='utf-8-sig')
             logger.info("电影数据处理完成")
             # 返回电影数据爬取完成的信息和文件名
-            yield "电影数据爬取完成！", filename
+            yield f"所有页面爬取完成！共获取 {total_movie_count} 部电影", filename
         except Exception as e:
             logger.error(f"电影数据处理失败：{str(e)}")
             yield f"电影数据处理失败：{str(e)}", None
@@ -564,7 +581,7 @@ class CrawlerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("豆瓣电影爬取工具")
-        self.geometry("600x450")
+        self.geometry("600x500")
 
         # 创建主框架
         main_frame = ttk.Frame(self, padding="10")
@@ -579,12 +596,51 @@ class CrawlerGUI(tk.Tk):
 
         # 电影爬取输入
         self.movie_page = ttk.Frame(input_frame, style='TFrame')
-        self.movie_page.pack(side=tk.LEFT, padx=10, anchor=tk.W)
+        self.movie_page.pack(side=tk.TOP, padx=10, anchor=tk.W, fill=tk.X)
         
-        ttk.Label(self.movie_page, text="页码（1-10）：").pack(side=tk.LEFT, padx=5)
-        self.movie_entry = ttk.Entry(self.movie_page, width=5)
+        # 爬取模式选择
+        mode_frame = ttk.Frame(self.movie_page)
+        mode_frame.pack(side=tk.TOP, anchor=tk.W, pady=5)
+        
+        ttk.Label(mode_frame, text="爬取模式：").pack(side=tk.LEFT, padx=5)
+        self.crawl_mode = tk.StringVar(value="single")
+        ttk.Radiobutton(mode_frame, text="单页", variable=self.crawl_mode, 
+                       value="single", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="多页", variable=self.crawl_mode, 
+                       value="multi", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="全部", variable=self.crawl_mode, 
+                       value="all", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        
+        # 页码输入框架
+        page_frame = ttk.Frame(self.movie_page)
+        page_frame.pack(side=tk.TOP, anchor=tk.W, pady=5)
+        
+        # 单页模式输入
+        self.single_page_frame = ttk.Frame(page_frame)
+        self.single_page_frame.pack(side=tk.LEFT)
+        ttk.Label(self.single_page_frame, text="页码（1-10）：").pack(side=tk.LEFT, padx=5)
+        self.movie_entry = ttk.Entry(self.single_page_frame, width=5)
         self.movie_entry.pack(side=tk.LEFT, padx=2)
-        self.movie_entry.insert(0, "1")  # 设置默认页码
+        self.movie_entry.insert(0, "1")
+        
+        # 多页模式输入
+        self.multi_page_frame = ttk.Frame(page_frame)
+        ttk.Label(self.multi_page_frame, text="起始页：").pack(side=tk.LEFT, padx=5)
+        self.start_page_entry = ttk.Entry(self.multi_page_frame, width=5)
+        self.start_page_entry.pack(side=tk.LEFT, padx=2)
+        self.start_page_entry.insert(0, "1")
+        
+        ttk.Label(self.multi_page_frame, text="结束页：").pack(side=tk.LEFT, padx=5)
+        self.end_page_entry = ttk.Entry(self.multi_page_frame, width=5)
+        self.end_page_entry.pack(side=tk.LEFT, padx=2)
+        self.end_page_entry.insert(0, "3")
+        
+        # 全部模式提示
+        self.all_page_frame = ttk.Frame(page_frame)
+        ttk.Label(self.all_page_frame, text="将爬取全部10页数据", foreground="blue").pack(side=tk.LEFT, padx=5)
+        
+        # 初始显示单页模式
+        self.on_mode_change()
 
         # 创建样式对象
         style = ttk.Style()
@@ -642,6 +698,24 @@ class CrawlerGUI(tk.Tk):
 
         # 添加状态变量存储当前数据文件路径
         self.current_data_file = None
+
+    def on_mode_change(self):
+        """爬取模式改变时的处理"""
+        mode = self.crawl_mode.get()
+        
+        # 隐藏所有框架
+        self.single_page_frame.pack_forget()
+        self.multi_page_frame.pack_forget()
+        self.all_page_frame.pack_forget()
+        
+        # 根据模式显示对应框架
+        if mode == "single":
+            self.single_page_frame.pack(side=tk.LEFT)
+        elif mode == "multi":
+            self.multi_page_frame.pack(side=tk.LEFT)
+        else:  # all
+            self.all_page_frame.pack(side=tk.LEFT)
+
 
     def select_and_generate_report(self):
         """打开文件选择对话框并生成报告"""
@@ -741,13 +815,33 @@ class CrawlerGUI(tk.Tk):
         """启动爬取任务"""
         logger.info("正在准备爬取豆瓣电影...")
         try:
-            page = int(self.movie_entry.get())
-            if not (1 <= page <= 10):
-                raise ValueError("电影页码需在1-10之间")
-            # 异步执行爬取任务
-            self.run_task(crawl_movie(page=page))
+            mode = self.crawl_mode.get()
+            
+            if mode == "single":
+                # 单页模式
+                page = int(self.movie_entry.get())
+                if not (1 <= page <= 10):
+                    raise ValueError("电影页码需在1-10之间")
+                self.run_task(crawl_movie(start_page=page, end_page=page))
+                
+            elif mode == "multi":
+                # 多页模式
+                start_page = int(self.start_page_entry.get())
+                end_page = int(self.end_page_entry.get())
+                
+                if not (1 <= start_page <= 10) or not (1 <= end_page <= 10):
+                    raise ValueError("页码需在1-10之间")
+                if start_page > end_page:
+                    raise ValueError("起始页不能大于结束页")
+                    
+                self.run_task(crawl_movie(start_page=start_page, end_page=end_page))
+                
+            else:  # all
+                # 全部模式
+                self.run_task(crawl_movie(start_page=1, end_page=10))
+                
         except Exception as e:
-            logger.error("输入错误", f"请检查输入：{str(e)}")
+            logger.error(f"输入错误，请检查输入：{str(e)}")
 
     def continue_task(self, generator, last_filename):
         """继续执行生成器任务"""
