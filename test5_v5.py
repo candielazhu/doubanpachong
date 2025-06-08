@@ -14,12 +14,17 @@ from tkinter import messagebox, ttk, filedialog
 import logging
 from datetime import datetime
 import threading
+import queue
 
 # ====================== 合规声明与常量 ======================
 LEGAL_NOTICE = """
 注意：本工具仅用于学习研究，严禁恶意爬取或商业用途！
 豆瓣电影排行爬取
 """
+# 线程池大小，可根据网络和CPU性能调整
+THREAD_POOL_SIZE = 5
+# 任务队列
+task_queue = queue.Queue()
 
 # 隐藏终端窗口 (仅Windows)
 if sys.platform == 'win32':
@@ -194,13 +199,32 @@ def crawl_movie(rank_type="top250",start_page=1, end_page=1):
         else:
             yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
 
-    threads = []  # 新增：存储线程的列表
-    for page in range(start_page, end_page + 1):
-        thread = threading.Thread(target=lambda p=page: list(crawl_single_page(p)))
+    def worker():
+        """线程工作函数"""
+        while True:
+            page = task_queue.get()
+            if page is None:
+                break
+            crawl_single_page(page)
+            task_queue.task_done()
+
+    # 创建线程池
+    threads = []
+    for _ in range(THREAD_POOL_SIZE):
+        thread = threading.Thread(target=worker)
         thread.start()
         threads.append(thread)
 
+    # 将任务加入队列
+    for page in range(start_page, end_page + 1):
+        task_queue.put(page)
+
     # 等待所有线程完成
+    task_queue.join()
+
+    # 停止所有线程
+    for _ in range(THREAD_POOL_SIZE):
+        task_queue.put(None)
     for thread in threads:
         thread.join()
 
@@ -763,24 +787,22 @@ class CrawlerGUI(tk.Tk):
         异步执行爬取任务
         :param generator: 爬取任务生成器
         """
-        try:
-            # 获取爬取状态和文件名
-            status, filename = next(generator)
-            # 更新状态文本
-            logger.info(status)
-            
-            # 存储当前数据文件路径
-            if filename:
-                self.current_data_file = os.path.join(get_safe_save_dir(), filename)
-            
-            # 100毫秒后继续执行任务
-            self.after(100, lambda: self.continue_task(generator, filename))
-        except StopIteration:
-            # 更新状态文本
-            logger.info("爬取任务完成！")
-            if self.current_data_file:
-                # 显示完成提示信息
-                messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
+        def thread_task():
+            try:
+                for status, filename in generator:
+                    self.after(0, lambda s=status, f=filename: self.update_status(s, f))
+            except Exception as e:
+                logger.error(f"爬取任务出错: {str(e)}")
+            finally:
+                self.after(0, lambda: self.update_status("爬取任务完成！", None))
+
+        threading.Thread(target=thread_task).start()
+    
+    def update_status(self, status, filename):
+        logger.info(status)
+        if filename:
+            self.current_data_file = os.path.join(get_safe_save_dir(), filename)
+            messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
 
     def generate_report(self):
         """生成数据分析报告"""
@@ -795,7 +817,7 @@ class CrawlerGUI(tk.Tk):
         
         logger.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
         # 异步生成报告防止界面卡死
-        self.after(100, self._async_generate_report)
+        threading.Thread(target=self._async_generate_report).start()
 
     def _async_generate_report(self):
         """异步执行报告生成"""
@@ -804,7 +826,7 @@ class CrawlerGUI(tk.Tk):
             success, result = analyze_and_generate_report(self.current_data_file)
             if success:
                 logger.info("报告生成成功！")
-                messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
+                self.after(0, lambda: messagebox.showinfo("成功", f"分析报告已保存到：\n{result}"))
             else:
                 logger.info("报告生成失败")
                 logger.error("错误", f"生成报告失败: {result}")
