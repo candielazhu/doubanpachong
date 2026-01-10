@@ -14,17 +14,13 @@ from tkinter import messagebox, ttk, filedialog
 import logging
 from datetime import datetime
 
-# ====================== 合规声明与常量 ======================
+
+# 合规声明与常量
 LEGAL_NOTICE = """
 注意：本工具仅用于学习研究，严禁恶意爬取或商业用途！
 豆瓣电影排行爬取
 """
 
-# 隐藏终端窗口 (仅Windows)
-if sys.platform == 'win32':
-    import ctypes
-    # 隐藏控制台窗口
-    ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 
 # 自定义日志处理程序，将日志输出到 GUI 日志框
 class GUILogHandler(logging.Handler):
@@ -39,17 +35,8 @@ class GUILogHandler(logging.Handler):
         self.log_text.see(tk.END)  # 自动滚动到底部
         self.log_text.config(state=tk.DISABLED)
 
-# 配置日志记录
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-# 代理IP示例（请替换为有效代理或留空）
-proxy_list = [
-    # 'http://120.25.1.15:7890'
-]
-
-#====================== 代理验证函数 ======================
+# 代理验证函数
 def test_proxy(proxy):
     """测试代理IP是否有效"""
     try:
@@ -57,27 +44,21 @@ def test_proxy(proxy):
         response = requests.get("https://www.baidu.com", proxies=proxies, timeout=10)
         time.sleep(random.uniform(1, 3))
         if response.status_code == 200:
-            logger.info(f"代理 {proxy} 有效")
+            logging.info(f"代理 {proxy} 有效")
             return True
         else:
-            logger.warning(f"代理 {proxy} 无效，状态码：{response.status_code}")
+            logging.warning(f"代理 {proxy} 无效，状态码：{response.status_code}")
             return False
     except Exception as e:
-        logger.error(f"代理 {proxy} 连接失败：{e}")
+        logging.error(f"代理 {proxy} 连接失败：{e}")
         return False
 
-# 验证代理列表
-valid_proxies = [proxy for proxy in proxy_list if test_proxy(proxy)]
-proxy_list = valid_proxies
 
+# 通用工具函数
 def get_safe_save_dir():
     """获取安全保存目录"""
     return os.path.abspath(os.path.dirname(__file__))
 
-# ====================== 通用工具函数 ======================
-def get_current_dir():
-    """获取当前工作目录"""
-    return os.path.abspath(os.path.dirname(__file__))
 
 def save_to_csv(data, filename, fieldnames):
     """安全保存数据到当前目录的CSV文件"""
@@ -86,485 +67,494 @@ def save_to_csv(data, filename, fieldnames):
     # 过滤 data 字典，只保留 fieldnames 中包含的字段
     filtered_data = {key: value for key, value in data.items() if key in fieldnames}
     try:
-        if not os.path.exists(file_path):
-            with open(file_path, "w", newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
         # 追加模式写入数据
         with open(file_path, "a", newline='', encoding='utf-8-sig') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writerow(filtered_data)
-            logger.info(f"成功写入数据到新文件: {file_path}")
+            logging.info(f"成功写入数据到新文件: {file_path}")
     except Exception as e:
-        logger.error(f"写入 CSV 文件失败: {str(e)}")
+        logging.error(f"写入 CSV 文件失败: {str(e)}")
 
-# ====================== 电影爬取模块 ======================
-def crawl_movie(rank_type="top250", page=1):
-    """爬取豆瓣电影排行榜"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 新增时间戳
-    filename = f"豆瓣电影排行_{rank_type}_{timestamp}.csv"  # 修改文件名格式
-    fieldnames = ['id', 'title', 'rating', 'director', 'actors', 'year', 'genre', 'country']
 
-    url = f"https://movie.douban.com/top250?start={(page - 1) * 25}"
-    headers = get_random_headers()
-    # 增加重试机制，提高请求稳定性
-    logger.info(f"开始爬取豆瓣电影第 {page} 页，URL: {url}")
-    response = make_request_with_retries(url, headers)
-    if not response:
-        logger.error(f"请求豆瓣电影第 {page} 页失败")
-        yield f"请求豆瓣电影第 {page} 页失败", None
-        return
+# 电影爬取模块
+class MovieCrawler:
+    def __init__(self):
+        self.proxy_list = [
+            # 'http://120.25.1.15:7890'
+        ]
+        self.valid_proxies = [proxy for proxy in self.proxy_list if test_proxy(proxy)]
+        self.proxy_list = self.valid_proxies
 
-    logger.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
-    logger.info(f"响应内容长度: {len(response.text)}")
+    def crawl_movie(self, rank_type="top250", start_page=1, end_page=1):
+        """爬取豆瓣电影排行榜 - 支持多页爬取"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if start_page == end_page:
+            filename = f"豆瓣电影排行_{rank_type}_第{start_page}页_{timestamp}.csv"
+        else:
+            filename = f"豆瓣电影排行_{rank_type}_第{start_page}-{end_page}页_{timestamp}.csv"
 
-    root = etree.HTML(response.text)
-    movies = root.xpath('//div[@class="item"]')
-    logger.info(f"找到 {len(movies)} 个电影节点")
+        fieldnames = ['id', 'title', 'rating', 'director', 'actors', 'year', 'genre', 'country']
+        total_movie_count = 0
 
-    # 增加请求间隔
-    time.sleep(random.uniform(2, 5))
-
-    root = etree.HTML(response.text)
-    movies = root.xpath('//div[@class="item"]')
-    movie_count = 0
-
-    for movie in movies:
+        # 初始化CSV文件，创建表头
+        save_dir = get_safe_save_dir()
+        file_path = os.path.join(save_dir, filename)
         try:
-            # 检查 XPath 表达式是否正确
-            title = movie.xpath('.//span[@class="title"]/text()')
-            if not title:
-                logger.warning(f"未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                continue
-            title = title[0]
-
-            rating = movie.xpath('.//span[@class="rating_num"]/text()')
-            if not rating:
-                logger.warning(f"未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                continue
-            rating = rating[0]
-
-            info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
-            if not info:
-                logger.warning(f"未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-                continue
-            info = ''.join(info).strip()
-
-            # 解析导演、演员、年份、类型、国家
-            director, actors = parse_director_and_actors(info)
-            year, genre, country = parse_year_genre_country(info)
-
-            data = {
-                'title': title,
-                'rating': rating,
-                'director': director,
-                'actors': actors,
-                'year': year,
-                'genre': genre,
-                'country': country
-            }
-            # 保存数据到CSV文件，暂不保存id
-            save_to_csv(data, filename, fieldnames[1:])
-            movie_count += 1
-            # 返回已获取电影的信息
-            yield f"已获取电影：{title}", None
+            with open(file_path, "w", newline='', encoding='utf-8-sig') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames[1:])  # 不包含id字段
+                writer.writeheader()
+            logging.info(f"初始化CSV文件: {file_path}")
         except Exception as e:
-            logger.error(f"解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
-            yield f"解析电影时出错：{str(e)}", None
+            logging.error(f"初始化CSV文件失败: {str(e)}")
+            return
 
-    if movie_count == 0:
-        logger.error("未成功获取到任何电影数据，可能爬取失败。")
-        print("未成功获取到任何电影数据，可能爬取失败。")
+        # 遍历指定页面范围
+        for page in range(start_page, end_page + 1):
+            url = f"https://movie.douban.com/top250?start={(page - 1) * 25}"
+            headers = self.get_random_headers()
 
-    # 数据后处理
-    save_dir = get_safe_save_dir()
-    file_path = os.path.join(save_dir, filename)
-    if os.path.exists(file_path):
+            logging.info(f"开始爬取豆瓣电影第 {page} 页，URL: {url}")
+            response = self.make_request_with_retries(url, headers)
+            if not response:
+                logging.error(f"请求豆瓣电影第 {page} 页失败")
+                yield f"请求豆瓣电影第 {page} 页失败", None
+                continue
+
+            logging.info(f"成功获取豆瓣电影第 {page} 页响应，响应状态码: {response.status_code}")
+
+            root = etree.HTML(response.text)
+            movies = root.xpath('//div[@class="item"]')
+            logging.info(f"第 {page} 页找到 {len(movies)} 个电影节点")
+
+            # 增加请求间隔
+            time.sleep(random.uniform(2, 5))
+
+            page_movie_count = 0
+
+            for movie in movies:
+                try:
+                    # 检查 XPath 表达式是否正确
+                    title = movie.xpath('.//span[@class="title"]/text()')
+                    if not title:
+                        logging.warning(f"第 {page} 页：未找到电影标题，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                        continue
+                    title = title[0]
+
+                    rating = movie.xpath('.//span[@class="rating_num"]/text()')
+                    if not rating:
+                        logging.warning(f"第 {page} 页：未找到电影评分，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                        continue
+                    rating = rating[0]
+
+                    info = movie.xpath('.//div[@class="bd"]/p[1]/text()')
+                    if not info:
+                        logging.warning(f"第 {page} 页：未找到电影信息，可能页面结构变化，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                        continue
+                    info = ''.join(info).strip()
+
+                    # 解析导演、演员、年份、类型、国家
+                    director, actors = self.parse_director_and_actors(info)
+                    year, genre, country = self.parse_year_genre_country(info)
+
+                    data = {
+                        'title': title,
+                        'rating': rating,
+                        'director': director,
+                        'actors': actors,
+                        'year': year,
+                        'genre': genre,
+                        'country': country
+                    }
+                    # 保存数据到CSV文件，暂不保存id
+                    save_to_csv(data, filename, fieldnames[1:])
+                    page_movie_count += 1
+                    total_movie_count += 1
+
+                    # 返回已获取电影的信息
+                    yield f"第{page}页 已获取电影：{title} (总计：{total_movie_count}部)", None
+
+                except Exception as e:
+                    logging.error(f"第 {page} 页解析电影时出错：{str(e)}，当前电影节点: {etree.tostring(movie, encoding='unicode')}")
+                    yield f"第 {page} 页解析电影时出错：{str(e)}", None
+
+            if page_movie_count == 0:
+                logging.error(f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。")
+                yield f"第 {page} 页未成功获取到任何电影数据，可能爬取失败。", None
+            else:
+                yield f"第 {page} 页成功获取到 {page_movie_count} 条电影数据。", None
+
+        # 数据后处理
+        save_dir = get_safe_save_dir()
+        file_path = os.path.join(save_dir, filename)
+        if os.path.exists(file_path) and total_movie_count > 0:
+            try:
+                # 读取CSV文件
+                df = pd.read_csv(file_path, encoding='utf-8-sig')
+                # 去除重复数据
+                df = df.drop_duplicates()
+
+                # 转换评分列为数值类型
+                df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
+                # 按评分降序排序
+                df = df.sort_values(by='rating', ascending=False)
+                # 重置索引保证顺序
+                df = df.reset_index(drop=True)
+
+                # 插入id列
+                df.insert(0, "id", [f"movie{i:04d}" for i in range(1, len(df) + 1)])
+                # 将处理后的数据保存到CSV文件
+                df.to_csv(file_path, index=False, encoding='utf-8-sig')
+                logging.info("电影数据处理完成")
+                # 返回电影数据爬取完成的信息和文件名
+                yield f"所有页面爬取完成！共获取 {total_movie_count} 部电影", filename
+            except Exception as e:
+                logging.error(f"电影数据处理失败：{str(e)}")
+                yield f"电影数据处理失败：{str(e)}", None
+        else:
+            logging.error(f"电影数据文件 {filename} 不存在，无法处理")
+            yield f"电影数据文件 {filename} 不存在，无法处理", None
+
+    def make_request_with_retries(self, url, headers, max_retries=3):
+        """
+        带重试机制的请求函数
+        :param url: 请求的URL
+        :param headers: 请求头
+        :param max_retries: 最大重试次数，默认为3
+        :return: 响应对象，若请求失败则返回None
+        """
+        retries = 0
+        while retries < max_retries:  # 循环尝试请求，直到达到最大重试次数
+            try:
+                # 使用随机代理
+                proxies = {"http": random.choice(self.proxy_list), "https": random.choice(self.proxy_list)} if self.proxy_list else {}
+                # 增加代理和超时时间
+                response = requests.get(url, headers=headers, proxies=proxies, timeout=10)
+                # 检查响应状态码是否正常
+                response.raise_for_status()
+
+                return response
+            except requests.exceptions.RequestException as e:
+                logging.warning(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
+                retries += 1
+        logging.error("达到最大重试次数，请求失败。")
+        return None
+
+    def get_text_from_xpath(self, element, xpath):
+        """
+        从xpath获取文本，若为空则返回空字符串
+        :param element: 要查找的元素
+        :param xpath: xpath表达式
+        :return: 查找到的文本，若为空则返回空字符串
+        """
+        result = element.xpath(xpath)  # 获取元素的文本
+        return result[0].text.strip() if result else ''  # 去除首尾空格，返回结果或空字符串
+
+    def parse_director_and_actors(self, info):
+        """
+        解析导演和演员信息
+        :param info: 电影信息字符串
+        :return: 导演和演员信息
+        """
+        parts = info.split('\n')[0].split(':')[1].strip().split(' ')
+        director = parts[0]
+        actors = '|'.join(parts[1:])
+        return director, actors
+
+    def parse_year_genre_country(self, info):
+        """
+        解析年份、类型和国家信息
+        :param info: 电影信息字符串
+        :return: 年份、类型和国家信息
+        """
+        year_genre = info.split('\n')[1].strip().split('/')
+        year = year_genre[0].strip()
+        genre = '/'.join(year_genre[1:-1]).strip()
+        country = year_genre[-1].strip()
+        return year, genre, country
+
+    def get_random_headers(self):
+        """
+        生成随机请求头
+        :return: 包含随机User-Agent和Accept-Language的请求头字典
+        """
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0'
+        ]
+        return {
+            "User-Agent": random.choice(user_agents),
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
+        }
+
+
+# 数据分析与可视化模块
+class MovieAnalyzer:
+    def analyze_and_generate_report(self, csv_file):
+        """
+        分析电影数据并生成可视化报告
+        :param csv_file: 要分析的CSV文件路径
+        :return: 分析是否成功的布尔值和报告文件路径或错误信息
+        """
         try:
-            # 读取CSV文件
-            df = pd.read_csv(file_path, encoding='utf-8-sig')
-            # 去除重复数据
-            df = df.drop_duplicates()
 
-            # 转换评分列为数值类型
-            df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
-            # 按评分降序排序
-            df = df.sort_values(by='rating', ascending=False)
-            # 重置索引保证顺序
-            df = df.reset_index(drop=True)
+            # ======== 添加中文字体支持 ========
+            plt.rcParams['font.sans-serif'] = ['SimHei']  # 使用黑体作为中文字体
+            plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 
-            # 插入id列
-            df.insert(0, "id", [f"movie{i:04d}" for i in range(1, len(df) + 1)])
-            # 将处理后的数据保存到CSV文件
-            df.to_csv(file_path, index=False, encoding='utf-8-sig')
-            logger.info("电影数据处理完成")
-            # 返回电影数据爬取完成的信息和文件名
-            yield "电影数据爬取完成！", filename
+            # 读取数据
+            df = pd.read_csv(csv_file, encoding='utf-8-sig')
+
+            # 数据清洗
+            df = self.clean_movie_data(df)
+
+            # 创建PDF报告
+            report_file = csv_file.replace('.csv', '_report.pdf')
+            with PdfPages(report_file) as pdf:
+                # 添加报告标题
+                plt.figure(figsize=(11, 8))
+                plt.suptitle('豆瓣电影数据分析报告', fontsize=20, fontweight='bold')
+                plt.figtext(0.5, 0.5, f"数据来源: {csv_file}\n生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                            ha='center', va='center', fontsize=16)
+                pdf.savefig()
+                plt.close()
+
+                # 1. 评分分布直方图
+                self.plot_rating_distribution(df, pdf)
+
+                # 2. 年份分布分析
+                self.plot_year_distribution(df, pdf)
+
+                # 3. 国家分布分析
+                self.plot_country_distribution(df, pdf)
+
+                # 4. 类型分布分析
+                self.plot_genre_distribution(df, pdf)
+
+                # 5. 导演作品分析
+                self.plot_director_analysis(df, pdf)
+
+                # 6. 评分TOP10电影
+                self.plot_top10_movies(df, pdf)
+
+                # 7. 数据概览表格
+                self.plot_data_overview(df, pdf)
+
+            return True, report_file
         except Exception as e:
-            logger.error(f"电影数据处理失败：{str(e)}")
-            yield f"电影数据处理失败：{str(e)}", None
-    else:
-        logger.error(f"电影数据文件 {filename} 不存在，无法处理")
-        yield f"电影数据文件 {filename} 不存在，无法处理", None
+            logging.error(f"生成报告失败: {str(e)}")
+            return False, str(e)
 
-def make_request_with_retries(url, headers, max_retries=3):
-    """
-    带重试机制的请求函数
-    :param url: 请求的URL
-    :param headers: 请求头
-    :param max_retries: 最大重试次数，默认为3
-    :return: 响应对象，若请求失败则返回None
-    """
-    retries = 0
-    while retries < max_retries:        # 循环尝试请求，直到达到最大重试次数
-        try:
-            #使用随机代理
-            proxies = {"http": random.choice(proxy_list), "https": random.choice(proxy_list)} if proxy_list else {} 
-            #增加代理和超时时间
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=10)
-            #检查响应状态码是否正常
-            response.raise_for_status()  
+    def clean_movie_data(self, df):
+        """
+        清洗电影数据
+        :param df: 电影数据DataFrame
+        :return: 清洗后的DataFrame
+        """
+        # 处理年份异常值
+        df['year'] = pd.to_numeric(df['year'], errors='coerce')
+        # 过滤无效年份
+        df = df[df['year'] > 1900]
 
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
-            retries += 1
-    logger.error("达到最大重试次数，请求失败。")
-    return None
+        # 拆分电影类型（一部电影可能有多个类型）
+        df['genre'] = df['genre'].str.split('/')
 
-def get_text_from_xpath(element, xpath):
-    """
-    从xpath获取文本，若为空则返回空字符串
-    :param element: 要查找的元素
-    :param xpath: xpath表达式
-    :return: 查找到的文本，若为空则返回空字符串
-    """
-    result = element.xpath(xpath)        # 获取元素的文本
-    return result[0].text.strip() if result else ''     # 去除首尾空格，返回结果或空字符串
+        # 拆分国家（一部电影可能有多个制片国家）
+        df['country'] = df['country'].str.split('/')
 
-def parse_director_and_actors(info):
-    """
-    解析导演和演员信息
-    :param info: 电影信息字符串
-    :return: 导演和演员信息
-    """
-    parts = info.split('\n')[0].split(':')[1].strip().split(' ')
-    director = parts[0]
-    actors = '|'.join(parts[1:])
-    return director, actors
+        return df
 
-def parse_year_genre_country(info):
-    """
-    解析年份、类型和国家信息
-    :param info: 电影信息字符串
-    :return: 年份、类型和国家信息
-    """
-    year_genre = info.split('\n')[1].strip().split('/')
-    year = year_genre[0].strip()
-    genre = '/'.join(year_genre[1:-1]).strip()
-    country = year_genre[-1].strip()
-    return year, genre, country
+    def plot_rating_distribution(self, df, pdf):
+        """
+        绘制评分分布直方图
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        plt.figure(figsize=(10, 6))
+        plt.hist(df['rating'], bins=20, color='skyblue', edgecolor='black', alpha=0.7)
+        plt.title('电影评分分布', fontsize=16)
+        plt.xlabel('评分', fontsize=12)
+        plt.ylabel('电影数量', fontsize=12)
+        plt.grid(axis='y', alpha=0.5)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
 
-# ====================== 通用支持函数 ======================
-def get_random_headers():
-    """
-    生成随机请求头
-    :return: 包含随机User-Agent和Accept-Language的请求头字典
-    """
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0'
-    ]
-    return {
-        "User-Agent": random.choice(user_agents),
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
-    }
+    def plot_year_distribution(self, df, pdf):
+        """
+        绘制年份分布分析
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        # 按年代分组
+        df['decade'] = (df['year'] // 10) * 10
+        decade_counts = df['decade'].value_counts().sort_index()
 
-def safe_request(url, headers,max_retries=3):
-    """
-    安全请求（带代理和异常处理）
-    :param url: 请求的URL
-    :param headers: 请求头
-    :param max_retries: 最大重试次数，默认为3
-    :return: 响应对象，若请求失败则返回None
-    """
-    retries = 0
-    while retries < max_retries:    # 循环尝试请求，直到达到最大重试次数
-        try:
-            proxies = {"http": random.choice(proxy_list), "https": random.choice(proxy_list)} if proxy_list else {}
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=20)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"请求失败（第 {retries + 1} 次尝试）：{str(e)}")
-            retries += 1
-    logger.error("达到最大重试次数，请求失败。")
-    response.encoding = 'utf-8'
-    return None
+        plt.figure(figsize=(10, 6))
+        decade_counts.plot(kind='bar', color='salmon', alpha=0.7)
+        plt.title('电影年代分布', fontsize=16)
+        plt.xlabel('年代', fontsize=12)
+        plt.ylabel('电影数量', fontsize=12)
+        plt.xticks(rotation=45)
+        plt.grid(axis='y', alpha=0.5)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
 
-# ====================== 数据分析与可视化模块 ======================
-def analyze_and_generate_report(csv_file):
-    """
-    分析电影数据并生成可视化报告
-    :param csv_file: 要分析的CSV文件路径
-    :return: 分析是否成功的布尔值和报告文件路径或错误信息
-    """
-    try:
-        
-        # ======== 添加中文字体支持 ========
-        plt.rcParams['font.sans-serif'] = ['SimHei']  # 使用黑体作为中文字体
-        plt.rcParams['axes.unicode_minus'] = False    # 解决负号显示问题
+    def plot_country_distribution(self, df, pdf):
+        """
+        绘制国家分布分析
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        # 展开多个制片国家
+        countries = df['country'].explode()
+        country_counts = countries.value_counts().head(10)  # 取前10个国家
 
-        # 读取数据
-        df = pd.read_csv(csv_file, encoding='utf-8-sig')
-        
-        # 数据清洗
-        df = clean_movie_data(df)
-        
-        # 创建PDF报告
-        report_file = csv_file.replace('.csv', '_report.pdf')
-        with PdfPages(report_file) as pdf:
-            # 添加报告标题
-            plt.figure(figsize=(11, 8))
-            plt.suptitle('豆瓣电影数据分析报告', fontsize=20, fontweight='bold')
-            plt.figtext(0.5, 0.5, f"数据来源: {csv_file}\n生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 
-                        ha='center', va='center', fontsize=16)
-            pdf.savefig()
-            plt.close()
-            
-            # 1. 评分分布直方图
-            plot_rating_distribution(df, pdf)
-            
-            # 2. 年份分布分析
-            plot_year_distribution(df, pdf)
-            
-            # 3. 国家分布分析
-            plot_country_distribution(df, pdf)
-            
-            # 4. 类型分布分析
-            plot_genre_distribution(df, pdf)
-            
-            # 5. 导演作品分析
-            plot_director_analysis(df, pdf)
-            
-            # 6. 评分TOP10电影
-            plot_top10_movies(df, pdf)
-            
-            # 7. 数据概览表格
-            plot_data_overview(df, pdf)
-        
-        return True, report_file
-    except Exception as e:
-        logger.error(f"生成报告失败: {str(e)}")
-        return False, str(e)
+        plt.figure(figsize=(10, 6))
+        country_counts.plot(kind='barh', color='lightgreen', alpha=0.7)
+        plt.title('电影类型分布 (Top 10)', fontsize=16)
+        plt.xlabel('电影数量', fontsize=12)
+        plt.ylabel('电影类型', fontsize=12)
+        plt.grid(axis='x', alpha=0.5)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
 
-def clean_movie_data(df):
-    """
-    清洗电影数据
-    :param df: 电影数据DataFrame
-    :return: 清洗后的DataFrame
-    """
-    # 处理年份异常值
-    df['year'] = pd.to_numeric(df['year'], errors='coerce')
-    #过滤无效年份
-    df = df[df['year'] > 1900]
-    
-    # 拆分电影类型（一部电影可能有多个类型）
-    df['genre'] = df['genre'].str.split('/')
-    
-    # 拆分国家（一部电影可能有多个制片国家）
-    df['country'] = df['country'].str.split('/')
-    
-    return df
+    def plot_genre_distribution(self, df, pdf):
+        """
+        绘制类型分布分析
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        # 展开多个类型
+        genres = df['genre'].explode()
+        genre_counts = genres.value_counts().head(10)  # 取前10个类型
 
-def plot_rating_distribution(df, pdf):
-    """
-    绘制评分分布直方图
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    plt.figure(figsize=(10, 6))
-    plt.hist(df['rating'], bins=20, color='skyblue', edgecolor='black', alpha=0.7)
-    plt.title('电影评分分布', fontsize=16)
-    plt.xlabel('评分', fontsize=12)
-    plt.ylabel('电影数量', fontsize=12)
-    plt.grid(axis='y', alpha=0.5)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
+        plt.figure(figsize=(10, 6))
+        genre_counts.plot(kind='bar', color='gold', alpha=0.7)
+        plt.title('制片国家分布 (Top 10)', fontsize=16)
+        plt.xlabel('国家', fontsize=12)
+        plt.ylabel('电影数量', fontsize=12)
+        plt.xticks(rotation=45)
+        plt.grid(axis='y', alpha=0.5)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
 
-def plot_year_distribution(df, pdf):
-    """
-    绘制年份分布分析
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    # 按年代分组
-    df['decade'] = (df['year'] // 10) * 10
-    decade_counts = df['decade'].value_counts().sort_index()
-    
-    plt.figure(figsize=(10, 6))
-    decade_counts.plot(kind='bar', color='salmon', alpha=0.7)
-    plt.title('电影年代分布', fontsize=16)
-    plt.xlabel('年代', fontsize=12)
-    plt.ylabel('电影数量', fontsize=12)
-    plt.xticks(rotation=45)
-    plt.grid(axis='y', alpha=0.5)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
+    def plot_director_analysis(self, df, pdf):
+        """
+        导演作品分析
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        # 统计导演作品数量和平均评分
+        director_stats = df.groupby('director').agg(
+            movie_count=('title', 'count'),
+            avg_rating=('rating', 'mean')
+        ).sort_values('movie_count', ascending=False).head(10)  # 取作品数量前10的导演
 
-def plot_country_distribution(df, pdf):
-    """
-    绘制国家分布分析
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    # 展开多个制片国家
-    countries = df['country'].explode()
-    country_counts = countries.value_counts().head(10)  # 取前10个国家
-    
-    plt.figure(figsize=(10, 6))
-    country_counts.plot(kind='barh', color='lightgreen', alpha=0.7)
-    plt.title('电影类型分布 (Top 10)', fontsize=16)
-    plt.xlabel('电影数量', fontsize=12)
-    plt.ylabel('电影类型', fontsize=12)
-    plt.grid(axis='x', alpha=0.5)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
-    
-def plot_genre_distribution(df, pdf):
-    """
-    绘制类型分布分析
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    # 展开多个类型
-    genres = df['genre'].explode()
-    genre_counts = genres.value_counts().head(10)  # 取前10个类型
-    
-    plt.figure(figsize=(10, 6))
-    genre_counts.plot(kind='bar', color='gold', alpha=0.7)
-    plt.title('制片国家分布 (Top 10)', fontsize=16)
-    plt.xlabel('国家', fontsize=12)
-    plt.ylabel('电影数量', fontsize=12)
-    plt.xticks(rotation=45)
-    plt.grid(axis='y', alpha=0.5)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
+        fig, ax1 = plt.subplots(figsize=(10, 6))
 
-def plot_director_analysis(df, pdf):
-    """
-    导演作品分析
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    # 统计导演作品数量和平均评分
-    director_stats = df.groupby('director').agg(
-        movie_count=('title', 'count'),
-        avg_rating=('rating', 'mean')
-    ).sort_values('movie_count', ascending=False).head(10)  # 取作品数量前10的导演
-    
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    
-    # 绘制作品数量柱状图
-    ax1.bar(director_stats.index, director_stats['movie_count'], color='royalblue', alpha=0.7)
-    ax1.set_xlabel('导演', fontsize=12)
-    ax1.set_ylabel('作品数量', color='royalblue', fontsize=12)
-    ax1.tick_params(axis='y', labelcolor='royalblue')
-    plt.xticks(rotation=45)
-    
-    # 创建第二个Y轴用于平均评分
-    ax2 = ax1.twinx()
-    ax2.plot(director_stats.index, director_stats['avg_rating'], color='red', marker='o', linewidth=2)
-    ax2.set_ylabel('平均评分', color='red', fontsize=12)
-    ax2.tick_params(axis='y', labelcolor='red')
-    
-    plt.title('导演作品数量与评分分析 (Top 10)', fontsize=16)
-    plt.grid(axis='y', alpha=0.5)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
+        # 绘制作品数量柱状图
+        ax1.bar(director_stats.index, director_stats['movie_count'], color='royalblue', alpha=0.7)
+        ax1.set_xlabel('导演', fontsize=12)
+        ax1.set_ylabel('作品数量', color='royalblue', fontsize=12)
+        ax1.tick_params(axis='y', labelcolor='royalblue')
+        plt.xticks(rotation=45)
 
-def plot_top10_movies(df, pdf):
-    """
-    绘制评分TOP10电影
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    top10 = df.nlargest(10, 'rating')
-    
-    plt.figure(figsize=(10, 6))
-    plt.barh(top10['title'], top10['rating'], color='violet', alpha=0.7)
-    plt.title('评分最高TOP10电影', fontsize=16)
-    plt.xlabel('评分', fontsize=12)
-    plt.ylabel('电影名称', fontsize=12)
-    
-    # 为每个条形添加评分值
-    for i, rating in enumerate(top10['rating']):
-        plt.text(rating + 0.05, i, f'{rating:.1f}', va='center')
-    
-    plt.gca().invert_yaxis()  # 反转Y轴使最高评分在顶部
-    plt.grid(axis='x', alpha=0.5)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
+        # 创建第二个Y轴用于平均评分
+        ax2 = ax1.twinx()
+        ax2.plot(director_stats.index, director_stats['avg_rating'], color='red', marker='o', linewidth=2)
+        ax2.set_ylabel('平均评分', color='red', fontsize=12)
+        ax2.tick_params(axis='y', labelcolor='red')
 
-def plot_data_overview(df, pdf):
-    """
-    绘制数据概览表格
-    :param df: 电影数据DataFrame
-    :param pdf: PDF报告对象
-    """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.axis('off')  # 隐藏坐标轴
-    
-    # 创建表格数据
-    table_data = [
-        ["数据集统计", "值"],
-        ["电影总数", len(df)],
-        ["平均评分", f"{df['rating'].mean():.2f}"],
-        ["最高评分", df['rating'].max()],
-        ["最低评分", df['rating'].min()],
-        ["最早年份", int(df['year'].min())],
-        ["最晚年份", int(df['year'].max())],
-        ["涉及国家数", df['country'].explode().nunique()],
-        ["涉及类型数", df['genre'].explode().nunique()],
-        ["涉及导演数", df['director'].nunique()]
-    ]
+        plt.title('导演作品数量与评分分析 (Top 10)', fontsize=16)
+        plt.grid(axis='y', alpha=0.5)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
 
-    # 创建表格
-    table = plt.table(
-        cellText=table_data,
-        loc='center',
-        cellLoc='center',
-        colWidths=[0.3, 0.3]
-    )
+    def plot_top10_movies(self, df, pdf):
+        """
+        绘制评分TOP10电影
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        top10 = df.nlargest(10, 'rating')
 
-    # 设置表格样式
-    table.auto_set_font_size(False)
-    table.set_fontsize(12)
-    table.scale(1, 1.5)  # 调整表格大小
+        plt.figure(figsize=(10, 6))
+        plt.barh(top10['title'], top10['rating'], color='violet', alpha=0.7)
+        plt.title('评分最高TOP10电影', fontsize=16)
+        plt.xlabel('评分', fontsize=12)
+        plt.ylabel('电影名称', fontsize=12)
 
-    # 设置标题行样式
-    for i in range(2):
-        table[(0, i)].set_facecolor('#40466e')
-        table[(0, i)].set_text_props(color='white', weight='bold')
+        # 为每个条形添加评分值
+        for i, rating in enumerate(top10['rating']):
+            plt.text(rating + 0.05, i, f'{rating:.1f}', va='center')
 
-    plt.title('数据概览', fontsize=16)
-    plt.tight_layout()
-    pdf.savefig()
-    plt.close()
+        plt.gca().invert_yaxis()  # 反转Y轴使最高评分在顶部
+        plt.grid(axis='x', alpha=0.5)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
 
-# ====================== GUI界面 ======================
+    def plot_data_overview(self, df, pdf):
+        """
+        绘制数据概览表格
+        :param df: 电影数据DataFrame
+        :param pdf: PDF报告对象
+        """
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.axis('off')  # 隐藏坐标轴
+
+        # 创建表格数据
+        table_data = [
+            ["数据集统计", "值"],
+            ["电影总数", len(df)],
+            ["平均评分", f"{df['rating'].mean():.2f}"],
+            ["最高评分", df['rating'].max()],
+            ["最低评分", df['rating'].min()],
+            ["最早年份", int(df['year'].min())],
+            ["最晚年份", int(df['year'].max())],
+            ["涉及国家数", df['country'].explode().nunique()],
+            ["涉及类型数", df['genre'].explode().nunique()],
+            ["涉及导演数", df['director'].nunique()]
+        ]
+
+        # 创建表格
+        table = plt.table(
+            cellText=table_data,
+            loc='center',
+            cellLoc='center',
+            colWidths=[0.3, 0.3]
+        )
+
+        # 设置表格样式
+        table.auto_set_font_size(False)
+        table.set_fontsize(12)
+        table.scale(1, 1.5)  # 调整表格大小
+
+        # 设置标题行样式
+        for i in range(2):
+            table[(0, i)].set_facecolor('#40466e')
+            table[(0, i)].set_text_props(color='white', weight='bold')
+
+        plt.title('数据概览', fontsize=16)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
+
+
+# GUI界面
 class CrawlerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("豆瓣电影爬取工具")
-        self.geometry("600x450")
+        self.geometry("600x500")
+        self.crawler = MovieCrawler()
+        self.analyzer = MovieAnalyzer()
+        self.current_data_file = None
 
         # 创建主框架
         main_frame = ttk.Frame(self, padding="10")
@@ -579,19 +569,57 @@ class CrawlerGUI(tk.Tk):
 
         # 电影爬取输入
         self.movie_page = ttk.Frame(input_frame, style='TFrame')
-        self.movie_page.pack(side=tk.LEFT, padx=10, anchor=tk.W)
-        
-        ttk.Label(self.movie_page, text="页码（1-10）：").pack(side=tk.LEFT, padx=5)
-        self.movie_entry = ttk.Entry(self.movie_page, width=5)
+        self.movie_page.pack(side=tk.TOP, padx=10, anchor=tk.W, fill=tk.X)
+
+        # 爬取模式选择
+        mode_frame = ttk.Frame(self.movie_page)
+        mode_frame.pack(side=tk.TOP, anchor=tk.W, pady=5)
+
+        ttk.Label(mode_frame, text="爬取模式：").pack(side=tk.LEFT, padx=5)
+        self.crawl_mode = tk.StringVar(value="single")
+        ttk.Radiobutton(mode_frame, text="单页", variable=self.crawl_mode,
+                        value="single", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="多页", variable=self.crawl_mode,
+                        value="multi", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="全部", variable=self.crawl_mode,
+                        value="all", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+
+        # 页码输入框架
+        page_frame = ttk.Frame(self.movie_page)
+        page_frame.pack(side=tk.TOP, anchor=tk.W, pady=5)
+
+        # 单页模式输入
+        self.single_page_frame = ttk.Frame(page_frame)
+        self.single_page_frame.pack(side=tk.LEFT)
+        ttk.Label(self.single_page_frame, text="页码（1-10）：").pack(side=tk.LEFT, padx=5)
+        self.movie_entry = ttk.Entry(self.single_page_frame, width=5)
         self.movie_entry.pack(side=tk.LEFT, padx=2)
-        self.movie_entry.insert(0, "1")  # 设置默认页码
+        self.movie_entry.insert(0, "1")
+
+        # 多页模式输入
+        self.multi_page_frame = ttk.Frame(page_frame)
+        ttk.Label(self.multi_page_frame, text="起始页：").pack(side=tk.LEFT, padx=5)
+        self.start_page_entry = ttk.Entry(self.multi_page_frame, width=5)
+        self.start_page_entry.pack(side=tk.LEFT, padx=2)
+        self.start_page_entry.insert(0, "1")
+
+        ttk.Label(self.multi_page_frame, text="结束页：").pack(side=tk.LEFT, padx=5)
+        self.end_page_entry = ttk.Entry(self.multi_page_frame, width=5)
+        self.end_page_entry.pack(side=tk.LEFT, padx=2)
+        self.end_page_entry.insert(0, "3")
+
+        # 全部模式提示
+        self.all_page_frame = ttk.Frame(page_frame)
+        ttk.Label(self.all_page_frame, text="将爬取全部10页数据", foreground="blue").pack(side=tk.LEFT, padx=5)
+
+        # 初始显示单页模式
+        self.on_mode_change()
 
         # 创建样式对象
         style = ttk.Style()
         # 设置 Label 的前景色
         style.configure("Blue.TLabel", foreground="blue")
 
-        
         # 代理输入框和验证按钮
         proxy_frame = ttk.Frame(self)
         proxy_frame.pack(pady=10, padx=20, fill=tk.X)
@@ -608,40 +636,55 @@ class CrawlerGUI(tk.Tk):
         # 控制按钮框架
         button_frame = ttk.Frame(self)
         button_frame.pack(pady=10)
-        
+
         # 爬取控制按钮
         ttk.Button(button_frame, text="开始爬取", command=self.start_crawling).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="退出", command=self.quit).pack(side=tk.LEFT, padx=5)
-        
+
         # 分析报告按钮
         report_frame = ttk.Frame(self)
         report_frame.pack(pady=10)
-        
+
         ttk.Button(report_frame, text="生成分析报告(当前数据)", command=self.generate_report).pack(side=tk.LEFT, padx=5)
         ttk.Button(report_frame, text="选择文件生成报告", command=self.select_and_generate_report).pack(side=tk.LEFT, padx=5)
 
         # 创建日志显示区域
         log_frame = ttk.LabelFrame(self, text="运行日志")
         log_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-        
+
         # 创建滚动条
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         # 创建日志文本框
         self.log_text = tk.Text(log_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.log_text.config(state=tk.DISABLED)  # 初始设置为不可编辑
-        
+
         scrollbar.config(command=self.log_text.yview)
-        
+
         # 配置日志处理程序
         gui_handler = GUILogHandler(self.log_text)
-        gui_handler.setFormatter(formatter)
-        logger.addHandler(gui_handler)
+        gui_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logging.getLogger().addHandler(gui_handler)
+        logging.getLogger().setLevel(logging.INFO)
 
-        # 添加状态变量存储当前数据文件路径
-        self.current_data_file = None
+    def on_mode_change(self):
+        """爬取模式改变时的处理"""
+        mode = self.crawl_mode.get()
+
+        # 隐藏所有框架
+        self.single_page_frame.pack_forget()
+        self.multi_page_frame.pack_forget()
+        self.all_page_frame.pack_forget()
+
+        # 根据模式显示对应框架
+        if mode == "single":
+            self.single_page_frame.pack(side=tk.LEFT)
+        elif mode == "multi":
+            self.multi_page_frame.pack(side=tk.LEFT)
+        else:  # all
+            self.all_page_frame.pack(side=tk.LEFT)
 
     def select_and_generate_report(self):
         """打开文件选择对话框并生成报告"""
@@ -650,17 +693,17 @@ class CrawlerGUI(tk.Tk):
             filetypes=[("CSV文件", "*.csv"), ("所有文件", "*.*")],
             initialdir=get_safe_save_dir()
         )
-        
+
         if file_path:
             # 更新状态文本
-            logger.info(f"已选择文件: {file_path}")
+            logging.info(f"已选择文件: {file_path}")
             # 存储当前数据文件路径
             self.current_data_file = file_path
             # 生成报告
             self.generate_report()
         else:
-            logger.info("文件选择已取消")
-        
+            logging.info("文件选择已取消")
+
     def run_task(self, generator):
         """
         异步执行爬取任务
@@ -670,17 +713,17 @@ class CrawlerGUI(tk.Tk):
             # 获取爬取状态和文件名
             status, filename = next(generator)
             # 更新状态文本
-            logger.info(status)
-            
+            logging.info(status)
+
             # 存储当前数据文件路径
             if filename:
                 self.current_data_file = os.path.join(get_safe_save_dir(), filename)
-            
+
             # 100毫秒后继续执行任务
             self.after(100, lambda: self.continue_task(generator, filename))
         except StopIteration:
             # 更新状态文本
-            logger.info("爬取任务完成！")
+            logging.info("爬取任务完成！")
             if self.current_data_file:
                 # 显示完成提示信息
                 messagebox.showinfo("完成", f"数据已保存到：\n{self.current_data_file}")
@@ -688,15 +731,15 @@ class CrawlerGUI(tk.Tk):
     def generate_report(self):
         """生成数据分析报告"""
         if not self.current_data_file:
-            logger.waring("警告", "请先爬取数据再生成报告")
+            logging.warning("警告：请先爬取数据再生成报告")
             return
-        
+
         # 检查文件是否存在
         if not os.path.exists(self.current_data_file):
-            logger.error("错误", f"文件不存在: {self.current_data_file}")
+            logging.error(f"错误：文件不存在: {self.current_data_file}")
             return
-        
-        logger.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
+
+        logging.info(f"正在分析文件: {os.path.basename(self.current_data_file)}")
         # 异步生成报告防止界面卡死
         self.after(100, self._async_generate_report)
 
@@ -704,22 +747,22 @@ class CrawlerGUI(tk.Tk):
         """异步执行报告生成"""
         try:
             # 生成报告
-            success, result = analyze_and_generate_report(self.current_data_file)
+            success, result = self.analyzer.analyze_and_generate_report(self.current_data_file)
             if success:
-                logger.info("报告生成成功！")
+                logging.info("报告生成成功！")
                 messagebox.showinfo("成功", f"分析报告已保存到：\n{result}")
             else:
-                logger.info("报告生成失败")
-                logger.error("错误", f"生成报告失败: {result}")
+                logging.info("报告生成失败")
+                logging.error(f"错误：生成报告失败: {result}")
         except Exception as e:
-            logger.info(f"报告生成错误: {str(e)}")
-            logger.error("错误", f"生成报告时出错: {str(e)}")
+            logging.info(f"报告生成错误: {str(e)}")
+            logging.error(f"错误：生成报告时出错: {str(e)}")
 
     def validate_proxy(self):
         # 获取输入的代理地址
         proxy = self.proxy_entry.get().strip()
         if not proxy:
-            logger.waring("警告", "请输入代理地址。")
+            logging.warning("警告：请输入代理地址。")
             return
         try:
             # 设置代理
@@ -729,34 +772,52 @@ class CrawlerGUI(tk.Tk):
             if response.status_code == 200:
                 # 显示代理可用的提示信息
                 messagebox.showinfo("验证成功", f"代理 {proxy} 可用。")
-                global proxy_list
-                # 更新代理列表
-                proxy_list = [proxy]
+                self.crawler.proxy_list = [proxy]
             else:
-                logger.error("验证失败", f"代理 {proxy} 不可用，状态码：{response.status_code}")
+                logging.error(f"验证失败：代理 {proxy} 不可用，状态码：{response.status_code}")
         except Exception as e:
-            logger.error("验证失败", f"代理 {proxy} 连接失败：{str(e)}")
+            logging.error(f"验证失败：代理 {proxy} 连接失败：{str(e)}")
 
     def start_crawling(self):
         """启动爬取任务"""
-        logger.info("正在准备爬取豆瓣电影...")
+        logging.info("正在准备爬取豆瓣电影...")
         try:
-            page = int(self.movie_entry.get())
-            if not (1 <= page <= 10):
-                raise ValueError("电影页码需在1-10之间")
-            # 异步执行爬取任务
-            self.run_task(crawl_movie(page=page))
+            mode = self.crawl_mode.get()
+
+            if mode == "single":
+                # 单页模式
+                page = int(self.movie_entry.get())
+                if not (1 <= page <= 10):
+                    raise ValueError("电影页码需在1-10之间")
+                self.run_task(self.crawler.crawl_movie(start_page=page, end_page=page))
+
+            elif mode == "multi":
+                # 多页模式
+                start_page = int(self.start_page_entry.get())
+                end_page = int(self.end_page_entry.get())
+
+                if not (1 <= start_page <= 10) or not (1 <= end_page <= 10):
+                    raise ValueError("页码需在1-10之间")
+                if start_page > end_page:
+                    raise ValueError("起始页不能大于结束页")
+
+                self.run_task(self.crawler.crawl_movie(start_page=start_page, end_page=end_page))
+
+            else:  # all
+                # 全部模式
+                self.run_task(self.crawler.crawl_movie(start_page=1, end_page=10))
+
         except Exception as e:
-            logger.error("输入错误", f"请检查输入：{str(e)}")
+            logging.error(f"输入错误，请检查输入：{str(e)}")
 
     def continue_task(self, generator, last_filename):
         """继续执行生成器任务"""
         try:
             status, filename = next(generator)
-            logger.info(f"{status}\n文件路径：{filename}")
+            logging.info(f"{status}\n文件路径：{filename}")
             self.after(100, lambda: self.continue_task(generator, filename))
         except StopIteration:
-            logger.info("爬取任务完成！")
+            logging.info("爬取任务完成！")
             # 检查 last_filename 是否有值
             if last_filename:
                 # 获取保存目录
@@ -765,7 +826,8 @@ class CrawlerGUI(tk.Tk):
                 file_path = os.path.join(save_dir, last_filename)
                 messagebox.showinfo("完成", f"数据已保存到：\n{file_path}")
 
-# ====================== 主程序 ======================
+
+# 主程序
 if __name__ == "__main__":
     # 初始化界面
     root = CrawlerGUI()
